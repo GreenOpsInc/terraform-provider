@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/terraform"
 	"io"
+	"log"
 	"net/http"
 	"time"
 )
@@ -29,7 +30,7 @@ func Provider() terraform.ResourceProvider {
 			},
 			"org": {
 				Type:        schema.TypeString,
-				Required:    false,
+				Optional:    true,
 				DefaultFunc: schema.EnvDefaultFunc("ORG_NAME", "org"),
 			},
 			"token": {
@@ -39,7 +40,7 @@ func Provider() terraform.ResourceProvider {
 			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
-			"cluster": resourceItem(),
+			"greenops_cluster": resourceItem(),
 		},
 		ConfigureFunc: providerConfigure,
 	}
@@ -72,18 +73,18 @@ func resourceItem() *schema.Resource {
 			},
 			"rotate": {
 				Type:        schema.TypeBool,
-				Required:    false,
+				Optional:    true,
 				Description: "Set to true to rotate the apikey used by the agent",
 				Default:     false,
 			},
 			"description": {
 				Type:        schema.TypeString,
-				Required:    false,
+				Optional:    true,
 				Description: "Description or notes for the cluster",
 			},
 			"apikey": {
 				Type:        schema.TypeString,
-				Required:    false,
+				Computed:    true,
 				Description: "API key that is defined when the GreenOps agent is created",
 				Sensitive:   true,
 			},
@@ -108,17 +109,25 @@ func resourceCreateItem(d *schema.ResourceData, m interface{}) error {
 		apiClient.address+fmt.Sprintf("/api/cluster/%s/%s/apikeys/generate", apiClient.orgName, clusterName),
 		bytes.NewBuffer([]byte{}),
 	)
+	if err != nil {
+		return err
+	}
+	request.Header.Add("x-api-key", apiClient.token)
 	resp, err := apiClient.httpClient.Do(request)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	log.Printf(resp.Status)
 
 	respContents, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
 
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("request was not successful: %s", string(respContents))
+	}
 	respContentsMap := make(map[string]string)
 	json.Unmarshal(respContents, &respContentsMap)
 	apiKey := respContentsMap["apiKey"]
@@ -146,6 +155,10 @@ func resourceReadItem(d *schema.ResourceData, m interface{}) error {
 		apiClient.address+fmt.Sprintf("/api/cluster/%s/apikeys/cluster", apiClient.orgName),
 		bytes.NewBuffer([]byte{}),
 	)
+	if err != nil {
+		return err
+	}
+	request.Header.Add("x-api-key", apiClient.token)
 	resp, err := apiClient.httpClient.Do(request)
 	if err != nil {
 		return err
@@ -157,6 +170,9 @@ func resourceReadItem(d *schema.ResourceData, m interface{}) error {
 		return err
 	}
 
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("request was not successful: %s", string(respContents))
+	}
 	respContentsList := make(GetApiKeysResponse, 0)
 	json.Unmarshal(respContents, &respContentsList)
 	for idx := range respContentsList {
@@ -180,6 +196,10 @@ func resourceUpdateItem(d *schema.ResourceData, m interface{}) error {
 			apiClient.address+fmt.Sprintf("/api/cluster/%s/%s/apikeys/rotate", apiClient.orgName, clusterName),
 			bytes.NewBuffer([]byte{}),
 		)
+		if err != nil {
+			return err
+		}
+		request.Header.Add("x-api-key", apiClient.token)
 		resp, err := apiClient.httpClient.Do(request)
 		if err != nil {
 			return err
@@ -191,6 +211,9 @@ func resourceUpdateItem(d *schema.ResourceData, m interface{}) error {
 			return err
 		}
 
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("request was not successful: %s", string(respContents))
+		}
 		respContentsMap := make(map[string]string)
 		json.Unmarshal(respContents, &respContentsMap)
 		apiKey := respContentsMap["apiKey"]
@@ -212,6 +235,10 @@ func resourceDeleteItem(d *schema.ResourceData, m interface{}) error {
 		apiClient.address+fmt.Sprintf("/api/cluster/%s/%s/apikeys", apiClient.orgName, clusterName),
 		bytes.NewBuffer([]byte{}),
 	)
+	if err != nil {
+		return err
+	}
+	request.Header.Add("x-api-key", apiClient.token)
 	resp, err := apiClient.httpClient.Do(request)
 	if err != nil {
 		return err
@@ -239,6 +266,10 @@ func resourceExistsItem(d *schema.ResourceData, m interface{}) (bool, error) {
 		apiClient.address+fmt.Sprintf("/api/cluster/%s/apikeys/cluster", apiClient.orgName),
 		bytes.NewBuffer([]byte{}),
 	)
+	if err != nil {
+		return false, err
+	}
+	request.Header.Add("x-api-key", apiClient.token)
 	resp, err := apiClient.httpClient.Do(request)
 	if err != nil {
 		return false, err
@@ -250,6 +281,9 @@ func resourceExistsItem(d *schema.ResourceData, m interface{}) (bool, error) {
 		return false, err
 	}
 
+	if resp.StatusCode != 200 {
+		return false, fmt.Errorf("request was not successful: %s", string(respContents))
+	}
 	respContentsList := make(GetApiKeysResponse, 0)
 	json.Unmarshal(respContents, &respContentsList)
 	for idx := range respContentsList {
